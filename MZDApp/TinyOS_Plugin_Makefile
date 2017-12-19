@@ -42,7 +42,7 @@
 # be uncommented. You have to replace "src/MainComponentC" by
 # your main-component (module or configuration).
 # ----------------------------------------------------------------
-# COMPONENT=src/MainComponentC 
+# COMPONENT=TestGTSAppC 
 
 
 
