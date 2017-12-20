@@ -68,7 +68,10 @@ implementation
   ieee154_address_t m_dstAddr;
   uint8_t *payloadRegion;
   uint16_t m_assignedShortAddress = 0;
-
+	typedef struct {
+		uint16_t node_id;
+		unsigned char message_payload : 6;
+	} gts_message_st;
   task void packetSendTask()
   {
     call Frame.setAddressingFields(
@@ -89,31 +92,32 @@ implementation
           );    
     }
   }
-
-  void askNodeToRequestGTS(ieee154_address_t destAddr) {
+	void GtsGetCharacteristics(uint8_t gtsCharacteristics, uint8_t * gtsLength,
+			bool * gtsDirection, bool * characteristicType) {
+		*gtsLength = gtsCharacteristics & 0b00001111;
+		*gtsDirection = (gtsCharacteristics & 0b00010000) >> 4;
+		*characteristicType = (gtsCharacteristics & 0b00100000) >> 5;
+	}
+  void askNodeToRequestGTS(uint8_t gtsCharacteristics, ieee154_address_t destAddr) {
    uint8_t header;
-   uint8_t payload;
+   gts_message_st* gts_message = (gts_message_st*)malloc(sizeof(gts_message_st));
    uint16_t fullPayload;
    void* payloadPointer;
+   		uint8_t gtsLength = 0;
+		bool gtsDirection = 0;
+		bool characteristicType = 0;
+			GtsGetCharacteristics(gtsCharacteristics, &gtsLength, &gtsDirection, 
+								&characteristicType);
+   printf("Tipo de mensagem: Requisição de GTS (0100) \n");
+   printf("Nodo: %d \n", destAddr.shortAddress);
+   printf("Tamanho do GTS: %d \n", gtsLength);
+   printf("Sentido: %d \n", gtsDirection);
+   printf("Característica: %d \n", characteristicType);
+   gts_message->node_id=destAddr.shortAddress;
+   gts_message->message_payload=(uint8_t) ((gtsCharacteristics && 00111111)<<2);
 
-
-   printf("Sending message to node request gts: %d \n" , destAddr.shortAddress);
-   header = 0b01000000;
-   payload = 'c';
-   fullPayload = (header << 8) | payload;
-   printf("myHeader: %hhX \n" , header);
-   printf("myPayload: %hhX \n" , payload);
-   printf("fullPayload: %hhX \n" , fullPayload);
-   payloadPointer =   call Frame.getPayload(&gts_frame);
-   memcpy(payloadPointer, &payload, sizeof(fullPayload));
-   m_payloadLen = sizeof(fullPayload);
-   m_dstAddr = destAddr;
-    call MCPS_DATA.request  (
-          &gts_frame,                         // frame,
-          m_payloadLen,                     // payloadLength,
-          0,                                // msduHandle,
-          TX_OPTIONS_ACK // TxOptions,
-          );   
+   payloadPointer =   call IEEE154TxBeaconPayload.setBeaconPayload(gts_message, sizeof(gts_message));
+   printf("Mensagem adicionada a carga útil do beacon \n");
   }
 
   bool GtsGetDirection(uint8_t gtsCharacteristics)
@@ -127,15 +131,13 @@ implementation
 
   event void Boot.booted() 
   {
-
-    char payload[]="GTS TEST!";
-printf("System UP!!! \n");
+  	uint8_t payload =0;
     m_messageCount=0;
-    m_payloadLen=strlen(payload);
+    m_payloadLen=strlen(&payload);
     payloadRegion=call Packet.getPayload(&m_frame, m_payloadLen);
 
     if (m_payloadLen <= call Packet.maxPayloadLength()){
-      memcpy(payloadRegion, payload, m_payloadLen);
+      memcpy(payloadRegion, &payload, m_payloadLen);
       m_gotSlot=0;
       call MLME_RESET.request(TRUE);
     }  
@@ -215,11 +217,6 @@ printf("System UP!!! \n");
   {
     if (GtsGetDirection(GtsCharacteristics) == GTS_RX_DIRECTION && m_gotSlot == 0)
     {
-      m_dstAddr.shortAddress=DeviceAddress;
-      m_gotSlot=1;
-      m_messageCount=0;
-  printf("GTS Requested by: %u \n" ,  DeviceAddress);
-  printf("GtsCharacteristics: %hx \n" ,  GtsCharacteristics);
       post packetSendTask();
     
     }
@@ -228,20 +225,14 @@ printf("System UP!!! \n");
   event void MLME_GTS.confirm (
                           uint8_t GtsCharacteristics,
                           ieee154_status_t status
-                        ){
-	printf("GTS Given to: %u \n" ,   m_dstAddr.shortAddress);
-}
+                        ){}
  event void MLME_ASSOCIATE.indication (
                           uint64_t DeviceAddress,
                           ieee154_CapabilityInformation_t CapabilityInformation,
                           ieee154_security_t *security
                         )
   {
-  	   ieee154_address_t destAddr;
-   destAddr.shortAddress = m_assignedShortAddress -1;
-   if(destAddr.shortAddress == 0)
-   	askNodeToRequestGTS(destAddr);
-    printf("MLME_ASSOCIATE.indication from: %llu \n" , DeviceAddress);
+  	printf("Pedido de associação recebido: \n");
     call MLME_ASSOCIATE.response(DeviceAddress, m_assignedShortAddress++, IEEE154_ASSOCIATION_SUCCESSFUL, 0);
   
 }
@@ -250,7 +241,39 @@ printf("System UP!!! \n");
                           uint16_t AssocShortAddress,
                           uint8_t status,
                           ieee154_security_t *security
-                        ){}
+                        ){
+                        	  	unsigned char message[18];
+                        	  	uint8_t* msg_pld_size;
+                        	  	uint16_t tinyId = (AssocShortAddress && 0x0004);
+                        	  	printf("Nodo: %d \n", AssocShortAddress);
+                        	  	printf("Associação confirmada \n");
+                        	  	printf("Encapsulando mensagem \n");
+                        	  	message[0]=0;
+                        	  	message[1]=0;
+                        	  	message[2]=0;
+                        	  	message[3]=1;
+                        	  	printf("Tipo de mensagem: Des/Associação \n");
+                        	  	message[4]=0;
+                        	  	message[5]=0;
+                        	  	message[6]=0;
+                        	  	message[7]=0;
+                        	  	message[8]=0;
+                        	  	message[9]=1;
+                        	  	message[10]=0;
+                        	  	message[11]=1;
+                        	  	msg_pld_size = (uint8_t*)&message[4];
+                        	  	printf("Tamanho do payload: %d \n", *msg_pld_size);
+								message[12]=1;
+                        	  	printf("Caracteristica: Associação (1) \n");
+                        	  	message[13]=(tinyId && 0b0000000000000001);
+                        	  	message[14]=(tinyId && 0b0000000000000010);
+                        	  	message[15]=(tinyId && 0b0000000000000100);
+                        	  	message[16]=(tinyId && 0b0000000000001000);
+                        	  	message[17]='\0';
+                        	  	printf("Nodo: %d \n", tinyId);
+                        	  	printf("Enviando mensagem de Associação de nodo para Serial \n", message);
+                        	  	printf("%s \n", message);
+                        	}
 }
 
 
